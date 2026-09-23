@@ -92,7 +92,7 @@ class Assistant(Agent):
 server = AgentServer()
 
 
-@server.rtc_session(agent_name="my-agent")
+@server.rtc_session(agent_name="voice-agent")
 async def my_agent(ctx: JobContext):
     # Logging setup
     # Add any other context you want in all log entries here
