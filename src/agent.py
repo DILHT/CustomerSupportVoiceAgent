@@ -1,6 +1,7 @@
 import logging
 import textwrap
-
+import os
+from pathlib import Path
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
@@ -13,10 +14,17 @@ from livekit.agents import (
     room_io,
 )
 from livekit.plugins import ai_coustics
+from knowledge import load_chunks, search
+from livekit.agents import function_tool, RunContext
 
 logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
+# agent.py is in src/, so going up two levels from this file gives the project root.
+# Anchoring to the file's own location means the path works no matter which
+# folder the agent is started from (your terminal, Docker, or LiveKit Cloud).
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+COMPANY_KNOWLEDGE_DIR = Path(os.getenv("KNOWLEDGE_DIR", PROJECT_ROOT / "company_knowledge"))
 
 
 class Assistant(Agent):
@@ -36,8 +44,7 @@ class Assistant(Agent):
             #    llm=openai.realtime.GPTLiveModel(voice="marin"),
             instructions=textwrap.dedent(
                 """\
-                You are a friendly, reliable voice assistant that answers questions, explains topics, and completes tasks with available tools.
-
+                You are the customer support assistant for Demo SACCO. You help members with questions about products, loans, and policies, and with complaints. For any question about these topics, use the search_knowledge_base tool first and answer only from its results.
                 # Output rules
 
                 You are interacting with the user via voice, and must apply the following rules to ensure your output sounds natural in a text-to-speech system:
@@ -67,27 +74,61 @@ class Assistant(Agent):
                 - Stay within safe, lawful, and appropriate use; decline harmful or out-of-scope requests.
                 - For medical, legal, or financial topics, provide general information only and suggest consulting a qualified professional.
                 - Protect privacy and minimize sensitive data.
+                - Explain eligibility criteria, but never tell a member whether they qualify. Only the SACCO's credit assessment decides eligibility.
                 """
             ),
         )
 
+        #Load once when the agent starts, not on every question.
+        #If the folder is missing this raises, and the agent refuses to start.
+        self._chunks = load_chunks(COMPANY_KNOWLEDGE_DIR)
+        logger.info("Loaded %d knowledge sections from %s", len(self._chunks), COMPANY_KNOWLEDGE_DIR)
+
     # To add tools, use the @function_tool decorator.
     # Here's an example that adds a simple weather tool.
     # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
+    @function_tool
+    async def search_knowledge_base(self, context: RunContext, query: str) -> str:
+        """Search the company's official information about products, loans,
+        interest rates, fees, eligibility, how to apply, and complaints procedures.
 
+        Always use this before answering any question on those topics, and
+        answer only from what it returns. If it finds nothing, say you don't
+        have that information and offer to connect the member with staff.
+        Never guess rates, fees, or policies.
+
+        Args:
+            query: The member's question as a few keywords, for example
+                "loan fees" or "how to make a complaint".
+        """
+    
+        results = search(self._chunks, query)
+
+        # Log WHAT was found, not what was asked: the query may contain the
+        # caller's personal details, and logs should not store them.
+        logger.info("Knowledge search returned %d sections", len(results))
+
+        if not results:
+            return "No matching information was found in the official knowledge base."
+
+        return "\n\n".join(
+            f"[{chunk.source} - {chunk.heading}]\n{chunk.text}" for chunk in results
+        )
+
+def _noise_cancellation():
+    """Return the noise-cancellation processor, or None when disabled.
+
+    Noise cancellation runs on the agent's CPU. On a slower laptop it blocks
+    the event loop and delays speech detection, so local dev can switch it
+    off with DISABLE_NOISE_CANCELLATION=true in .env.local. It stays ON by
+    default so deployed agents always get clean audio.
+    """
+    if os.getenv("DISABLE_NOISE_CANCELLATION", "false").strip().lower() == "true":
+        logger.info("Noise cancellation disabled via DISABLE_NOISE_CANCELLATION")
+        return None
+    return ai_coustics.audio_enhancement(
+        model=ai_coustics.EnhancerModel.QUAIL_VF_S
+    )
 
 server = AgentServer()
 
@@ -137,9 +178,7 @@ async def my_agent(ctx: JobContext):
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(
-                noise_cancellation=ai_coustics.audio_enhancement(
-                    model=ai_coustics.EnhancerModel.QUAIL_VF_S
-                ),
+                noise_cancellation=_noise_cancellation(),
             ),
         ),
     )
