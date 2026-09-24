@@ -11,17 +11,44 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-# A markdown heading line: 1-6 '#' characters, a space, then the title.
-_HEADING = re.compile(r"^#{1,6}\s+(.*)$")
-
+# A markdown heading: group 1 is the '#' characters (the level), group 2 is the title.
+_HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 # Words are runs of letters/digits. "3.75%" becomes "3" and "75", which is fine.
 _WORD = re.compile(r"[a-z0-9]+")
 
 # Common words that appear everywhere and carry no meaning for matching.
 _STOPWORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "can", "do", "does", "for",
-    "how", "i", "if", "in", "is", "it", "me", "my", "of", "on", "or", "the",
-    "to", "what", "when", "which", "who", "with", "you", "your",
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "can",
+    "do",
+    "does",
+    "for",
+    "how",
+    "i",
+    "if",
+    "in",
+    "is",
+    "it",
+    "me",
+    "my",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "what",
+    "when",
+    "which",
+    "who",
+    "with",
+    "you",
+    "your",
 }
 
 # Caps protect the agent: the query comes from the LLM, which is driven by
@@ -80,25 +107,39 @@ def search(chunks: list[Chunk], query: str, top_k: int = DEFAULT_TOP_K) -> list[
 
 
 def _split_by_heading(source: str, content: str) -> list[Chunk]:
-    """Turn one document into chunks, starting a new chunk at each heading."""
+    """Turn one document into chunks, starting a new chunk at each heading.
+
+    The top-level '# Title' is remembered and prefixed to every section below
+    it, e.g. "Mgodi Personal Loan > Fees". This is contextual chunking: each
+    chunk carries enough context to be understood on its own.
+    """
     chunks: list[Chunk] = []
-    heading = "Overview"  # used for any text that appears before the first heading
+    title = ""  # the document's '# Title', once we've seen it
+    heading = "Overview"  # used for text that appears before any heading
     lines: list[str] = []
 
     for line in content.splitlines():
         match = _HEADING.match(line)
         if match:
             _add_chunk(chunks, source, heading, lines)
-            heading = match.group(1).strip()
+            level = len(match.group(1))  # '#' = 1, '##' = 2, ...
+            text = match.group(2).strip()
+            if level == 1:
+                title = text
+                heading = text
+            else:
+                heading = f"{title} > {text}" if title else text
             lines = []
         else:
             lines.append(line)
 
-    _add_chunk(chunks, source, heading, lines)  # don't forget the last section
+    _add_chunk(chunks, source, heading, lines)
     return chunks
 
 
-def _add_chunk(chunks: list[Chunk], source: str, heading: str, lines: list[str]) -> None:
+def _add_chunk(
+    chunks: list[Chunk], source: str, heading: str, lines: list[str]
+) -> None:
     """Save a section as a chunk, skipping sections with no text."""
     text = "\n".join(lines).strip()
     if text:

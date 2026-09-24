@@ -28,14 +28,14 @@ def _make_knowledge_dir(tmp_path):
 def test_document_is_split_into_sections(tmp_path):
     chunks = load_chunks(_make_knowledge_dir(tmp_path))
     headings = [chunk.heading for chunk in chunks]
-    assert "Fees" in headings
-    assert "Who Qualifies" in headings
+    assert "Sample Loan > Fees" in headings
+    assert "Sample Loan > Who Qualifies" in headings
 
 
 def test_search_returns_the_most_relevant_section_first(tmp_path):
     chunks = load_chunks(_make_knowledge_dir(tmp_path))
     results = search(chunks, "what are the fees for the loan")
-    assert results[0].heading == "Fees"
+    assert results[0].heading == "Sample Loan > Fees"
 
 
 def test_search_returns_nothing_for_unrelated_question(tmp_path):
@@ -47,3 +47,10 @@ def test_missing_knowledge_folder_fails_loudly(tmp_path):
     # A support agent with no knowledge must NOT start silently.
     with pytest.raises(FileNotFoundError):
         load_chunks(tmp_path / "does-not-exist")
+
+
+def test_section_heading_names_the_product(tmp_path):
+    # Every section must say which document (product) it belongs to,
+    # so the agent can never mistake one product's terms for another's.
+    chunks = load_chunks(_make_knowledge_dir(tmp_path))
+    assert all(chunk.heading.startswith("Sample Loan") for chunk in chunks)
