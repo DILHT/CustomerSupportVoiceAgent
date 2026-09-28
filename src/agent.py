@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import os
+import sqlite3
 import textwrap
 from pathlib import Path
 
@@ -17,7 +19,9 @@ from livekit.agents import (
     room_io,
 )
 from livekit.plugins import ai_coustics
+from pydantic import ValidationError
 
+from complaints import Complaint, ComplaintLimitReachedError, ComplaintStore
 from knowledge import load_chunks, search
 
 logger = logging.getLogger("agent")
@@ -32,6 +36,10 @@ COMPANY_KNOWLEDGE_DIR = Path(
 )
 # The company this deployment serves. Each company sets its own name.
 COMPANY_NAME = os.getenv("COMPANY_NAME", "United Civil Servant SACCO")
+# Where complaints are stored. The data/ folder is git-ignored.
+COMPLAINTS_DB = Path(
+    os.getenv("COMPLAINTS_DB", PROJECT_ROOT / "data" / "complaints.db")
+)
 
 
 def build_instructions(company_name: str) -> str:
@@ -62,10 +70,17 @@ def build_instructions(company_name: str) -> str:
         - Do not advise a member on whether they should borrow.
 
         # Complaints
-        - You cannot record complaints yet. Explain the complaints process from the knowledge base and tell the member which official channels to use.
-        - Never say a complaint has been recorded, and never give a reference number.
+        - You can record complaints with the log_complaint tool.
+        - After giving the reference number, ask the member to confirm they have written it down, and offer to repeat it.
+        - First ask the member what happened, and listen. Then collect their full name and a phone number for follow-up, one at a time. Choose the category yourself from what they describe.
+        - Before recording, read the details back and ask the member to confirm.
+        - Only give a reference number that the tool returns, and read it slowly, character by character.
+        - If the complaint involves fraud, stolen money, or a data leak, tell the member it will go to the Risk and Compliance team as urgent.
+        - If recording fails, apologise and direct the member to a branch or another official channel.
 
         # What you cannot do
+        -  You cannot see the caller's phone number or any details about the call. Always ask the member to say a phone number for follow-up.
+        - If a member will not give a phone number, explain that it is needed so the team can contact them, and suggest they report the complaint at a branch instead. Never record a complaint without a phone number the member has said.
         - You cannot see or change accounts, balances, or loan status, and you cannot transfer calls. For these, direct the member to a branch or another official {company_name} channel.
         - Never promise an action you cannot perform.
 
@@ -117,6 +132,8 @@ class Assistant(Agent):
             COMPANY_KNOWLEDGE_DIR,
         )
 
+        self._complaints = ComplaintStore(COMPLAINTS_DB)
+
     # To add tools, use the @function_tool decorator.
     # Here's an example that adds a simple weather tool.
     # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
@@ -146,6 +163,87 @@ class Assistant(Agent):
 
         return "\n\n".join(
             f"[{chunk.source} - {chunk.heading}]\n{chunk.text}" for chunk in results
+        )
+
+    @function_tool
+    async def log_complaint(
+        self,
+        context: RunContext,
+        member_name: str,
+        phone: str,
+        category: str,
+        description: str,
+    ) -> str:
+        """Record a member's complaint and get an official reference number.
+
+        Only call this after collecting all four details and reading them
+        back to the member for confirmation. Never invent a reference number;
+        only use the one this tool returns.
+
+        Args:
+            member_name: The member's full name.
+            phone: A Malawi phone number for follow-up, for example 0888123456.
+            category: Exactly one of: service, staff_conduct, transaction,
+                charges, loan_application, digital_channel, fraud_or_security,
+                data_protection, other.
+            description: What happened, in the member's words, at least one full sentence.
+        """
+        # 1. Validate. If anything is wrong, tell the LLM exactly what to
+        #    fix, so it can ask the member again (a feedback loop).
+        try:
+            # model_validate is Pydantic's entry point for untrusted input:
+            # it accepts raw data (a dict) and validates it. Using it here
+            # says clearly "this came from outside and must be checked",
+            # and it keeps the type checker happy.
+            complaint = Complaint.model_validate(
+                {
+                    "member_name": member_name,
+                    "phone": phone,
+                    "category": category,
+                    "description": description,
+                }
+            )
+        except ValidationError as err:
+            # Only field names and messages, never the input values, since
+            # they may contain personal data.
+            problems = "; ".join(
+                f"{e['loc'][0] if e['loc'] else 'complaint'}: {e['msg']}"
+                for e in err.errors()
+            )
+            return (
+                f"The complaint was NOT recorded. Ask the member to correct: {problems}"
+            )
+
+        # 2. Save. SQLite blocks while writing, so run it in a worker thread
+        #    to keep the event loop (and the audio) running smoothly.
+        try:
+            record = await asyncio.to_thread(self._complaints.save, complaint)
+        except ComplaintLimitReachedError:
+            # No phone number in the log: only the fact that the limit applied.
+            logger.info("Complaint limit reached (category=%s)", complaint.category)
+            return (
+                "The complaint was NOT recorded: this phone number has reached today's "
+                "complaint limit. Apologise, and suggest the member visit a branch or "
+                "call again tomorrow."
+            )
+        except sqlite3.Error:
+            logger.exception("Failed to save complaint")
+            return (
+                "The complaint could NOT be recorded because of a system error. "
+                "Apologise and ask the member to report it at a branch or another official channel."
+            )
+
+        # 3. Log the reference and routing only: no name, phone, or description.
+        logger.info(
+            "Complaint recorded %s (category=%s, team=%s)",
+            record.reference,
+            record.category,
+            record.assigned_team,
+        )
+        return (
+            f"Complaint recorded. Reference number: {record.reference}. "
+            f"Assigned to: {record.assigned_team}. Priority: {record.priority}. "
+            "Read the reference number to the member slowly, character by character."
         )
 
 

@@ -6,6 +6,8 @@ Our code avoids logging questions, but the framework logs them at debug level. T
 ### Action 
 Phase 3: confirm production mode (lk agent start) doesn't log at debug level
 
+## Observation 1
+My agent passed the behavioural test and still failed the data-protection test."
 
 ## Old prompt 
 You are the customer support assistant for Demo SACCO. You help members with questions about products, loans, and policies, and with complaints. For any question about these topics, use the search_knowledge_base tool first and answer only from its results.
@@ -41,3 +43,25 @@ You are the customer support assistant for Demo SACCO. You help members with que
                 - Each knowledge result names the product it belongs to. If a member asks about a product that is not named in the results, say that Demo SACCO's information does not cover that product and offer to connect them with staff. Never apply one product's rates, fees, or terms to another product.
                 - Do not calculate loan costs, repayments, or totals. Share rates and fees exactly as written, including whether a rate is per month or per year, and explain that final costs are confirmed during the application.
                 - Explain eligibility criteria, but never tell a member whether they qualify. Only the SACCO's credit assessment decides eligibility.
+
+### Errrors
+### Fix: let Ruff fix itself
+bash
+uv run ruff check --fix . && uv run ruff format .
+uv run ruff check --fix .
+uv run ruff format .
+
+The first command fixes lint issues it can fix automatically (all four of these). The second applies consistent formatting everywhere. Then confirm everything is clean, and re-run tests to be sure nothing broke:
+
+bash
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+
+If all three pass, commit and push:
+
+bash
+git add -A
+git commit -m "Apply ruff lint and formatting fixes"
+git push
+
