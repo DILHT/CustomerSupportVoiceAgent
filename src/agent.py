@@ -99,11 +99,21 @@ def build_instructions(company_name: str) -> str:
         - When the member thanks you or says goodbye, close warmly and briefly.
 
         # Greeting
-        - When the member first greets you, say: "Welcome to {company_name}. How may I help you today?"
+        - You have already greeted the member when the call started. Do not greet them again; respond directly to what they say.
 
         """
     )
 
+def build_greeting(company_name: str) -> str:
+    """The fixed opening line, spoken the moment the call connects.
+
+    Fixed text (not LLM-generated) so it is instant, identical on every
+    call, and always tells the member they are speaking with an AI.
+    """
+    return (
+        f"Welcome to {company_name}. You're speaking with an automated assistant. "
+        "How may I help you today?"
+    )
 
 class Assistant(Agent):
     def __init__(self) -> None:
@@ -134,6 +144,9 @@ class Assistant(Agent):
 
         self._complaints = ComplaintStore(COMPLAINTS_DB)
 
+    async def on_enter(self) -> None:
+        """Called automatically by LiveKit when this agent joins the call."""
+        self.session.say(build_greeting(COMPANY_NAME))
     # To add tools, use the @function_tool decorator.
     # Here's an example that adds a simple weather tool.
     # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
@@ -280,7 +293,7 @@ async def my_agent(ctx: JobContext):
         # Text-to-speech (TTS) is your agent's voice, turning the LLM's text into speech that the user can hear
         # See all available models as well as voice selections at https://docs.livekit.io/agents/models/tts/
         tts=inference.TTS(
-            model="fishaudio/s2.1-pro", voice="fa4c9eb3dccc4806b382b40d61c6b10a"
+            model="fishaudio/s2.1-pro", voice="933563129e564b19a115bedd57b7406a"
         ),
         turn_handling=TurnHandlingOptions(
             # The LiveKit turn detector determines when the user is done speaking and the agent should respond.
