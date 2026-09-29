@@ -110,7 +110,7 @@ def _split_by_heading(source: str, content: str) -> list[Chunk]:
     """Turn one document into chunks, starting a new chunk at each heading.
 
     The top-level '# Title' is remembered and prefixed to every section below
-    it, e.g. "Mgodi Personal Loan > Fees". This is contextual chunking: each
+    it, e.g. "Chuma Personal Loan > Fees". This is contextual chunking: each
     chunk carries enough context to be understood on its own.
     """
     chunks: list[Chunk] = []

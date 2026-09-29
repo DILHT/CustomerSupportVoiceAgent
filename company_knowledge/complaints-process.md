@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Demo SACCO provides a formal process for members to raise complaints about products, services, staff conduct, transactions, charges, loan applications, digital channels, or other service problems.
+Chuma SACCO provides a formal process for members to raise complaints about products, services, staff conduct, transactions, charges, loan applications, digital channels, or other service problems.
 
 Members should first report the complaint through an official SACCO channel, such as a branch, customer service desk, telephone channel, email, or approved digital channel.
 

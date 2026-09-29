@@ -71,3 +71,7 @@ GEMINI.md
 .github/copilot-instructions.md
 .github/personal-instructions.md
 .github/instructions/
+
+# Local databases (contain member data)
+data/
+*.db

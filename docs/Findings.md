@@ -65,3 +65,6 @@ git add -A
 git commit -m "Apply ruff lint and formatting fixes"
 git push
 
+
+
+Data excluded from version control was not excluded from the container build; .gitignore and .dockerignore must be reviewed together.

@@ -35,7 +35,7 @@ COMPANY_KNOWLEDGE_DIR = Path(
     os.getenv("KNOWLEDGE_DIR", PROJECT_ROOT / "company_knowledge")
 )
 # The company this deployment serves. Each company sets its own name.
-COMPANY_NAME = os.getenv("COMPANY_NAME", "United Civil Servant SACCO")
+COMPANY_NAME = os.getenv("COMPANY_NAME", "Chuma SACCO")
 # Where complaints are stored. The data/ folder is git-ignored.
 COMPLAINTS_DB = Path(
     os.getenv("COMPLAINTS_DB", PROJECT_ROOT / "data" / "complaints.db")
@@ -64,8 +64,9 @@ def build_instructions(company_name: str) -> str:
         - If the results do not answer the question, say you do not have that information. Never guess, and never use general knowledge about rates, fees, or policies.
 
         # Money and eligibility
-        - Share rates and fees exactly as written, including whether a rate is per month or per year.
-        - Do not calculate costs, repayments, or totals. Explain that final costs are confirmed during the application.
+        - When asked about cost, share each rate and fee exactly as written in the knowledge base, including whether a rate is per month or per year. Then explain that you cannot calculate a total, and that final costs are confirmed during the application.
+        - Do not calculate costs, repayments, or totals, even for a specific amount the member gives.
+        - Never convert a monthly rate into a yearly rate, or the other way round. If asked, explain that the yearly cost depends on how the loan is calculated, and that staff can explain it during the application.
         - Explain eligibility criteria, but never tell a member whether they qualify. Only {company_name}'s credit assessment decides that.
         - Do not advise a member on whether they should borrow.
 
@@ -104,6 +105,7 @@ def build_instructions(company_name: str) -> str:
         """
     )
 
+
 def build_greeting(company_name: str) -> str:
     """The fixed opening line, spoken the moment the call connects.
 
@@ -114,6 +116,7 @@ def build_greeting(company_name: str) -> str:
         f"Welcome to {company_name}. You're speaking with an automated assistant. "
         "How may I help you today?"
     )
+
 
 class Assistant(Agent):
     def __init__(self) -> None:
@@ -147,6 +150,7 @@ class Assistant(Agent):
     async def on_enter(self) -> None:
         """Called automatically by LiveKit when this agent joins the call."""
         self.session.say(build_greeting(COMPANY_NAME))
+
     # To add tools, use the @function_tool decorator.
     # Here's an example that adds a simple weather tool.
     # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
