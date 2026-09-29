@@ -68,3 +68,7 @@ git push
 
 
 Data excluded from version control was not excluded from the container build; .gitignore and .dockerignore must be reviewed together.
+
+Choosing an EU region doesn't guarantee EU-only processing; the inference models may run elsewhere. The same question applies to Malawi's Data Protection Act for any real deployment.
+
+Agent runtime region (EU) and observability storage region (US) are configured separately. Selecting an EU region for the agent does not keep transcripts or recordings in the EU. Any real deployment must check every data store's region, not just where the agent runs. The same applies to Malawi's Data Protection Act, section 38
