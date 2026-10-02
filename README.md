@@ -1,175 +1,119 @@
-<a href="https://livekit.io/">
-  <img src="./.github/assets/livekit-mark.png" alt="LiveKit logo" width="100" height="100">
-</a>
+# SACCO Voice Support Agent
 
-# LiveKit Agents Starter - Python
+A real-time voice AI support agent for a savings and credit cooperative (SACCO), built with [LiveKit Agents](https://docs.livekit.io/agents) in Python.
 
-A complete starter project for building voice AI apps with [LiveKit Agents for Python](https://github.com/livekit/agents) and [LiveKit Cloud](https://cloud.livekit.io/).
+It answers member questions **only from approved documents**, records complaints through a **validated tool** with deterministic routing and rate limits, and refuses to invent products or collect sensitive information.
 
-The starter project includes:
+> All company data in this repo is **fictional** ("Chuma SACCO"). The agent is designed to be configured for any institution by swapping its knowledge files and settings.
 
-- A simple voice AI assistant, ready for extension and customization
-- A voice AI pipeline built on [LiveKit Inference](https://docs.livekit.io/agents/models/inference), providing zero-configuration access to [models](https://docs.livekit.io/agents/models) from top labs
-  - Uses the fast, open-weight Gemma 4 31B model, [hosted by LiveKit](https://docs.livekit.io/agents/models/llm/livekit/) and tuned for optimal performance in voice AI, as the default LLM
-  - Uses Fish Audio S2.1 Pro for TTS, which renders the inline delivery markup that expressive mode relies on
-  - Supports more than 50 models from OpenAI, Cartesia, Deepgram, and other providers
-  - Access to a wide range of other models, including [Realtime models](https://docs.livekit.io/agents/models/realtime), through extensive plugin ecosystem
-- Expressive mode, enabled by default: the framework injects the TTS provider's markup guide into the LLM prompt, so the model emits inline delivery tags (emotion, pacing, non-verbal sounds) that the TTS renders and the transcript never shows
-- Eval suite based on the LiveKit Agents [testing & evaluation framework](https://docs.livekit.io/agents/start/testing/)
-- [LiveKit Turn Detector](https://docs.livekit.io/agents/logic/turns/turn-detector/), an end-of-turn model that listens to the user's audio directly, combining semantic understanding with acoustic cues for state-of-the-art accuracy across 14 languages
-- [Background voice cancellation](https://docs.livekit.io/transport/media/noise-cancellation/)
-- Deep session insights from LiveKit [Agent Observability](https://docs.livekit.io/deploy/observability/)
-- A Dockerfile ready for [production deployment to LiveKit Cloud](https://docs.livekit.io/deploy/agents/)
+**Live demo:** an access-protected web frontend is deployed. The access link is available on request.
 
-This starter app is compatible with any [custom web/mobile frontend](https://docs.livekit.io/frontends/) or [telephony](https://docs.livekit.io/telephony/).
+---
 
-## Using coding agents
+## What it does
 
-This project is designed to work with coding agents like [Claude Code](https://claude.com/product/claude-code), [Cursor](https://www.cursor.com/), and [Codex](https://openai.com/codex/).
+| Capability | How |
+|---|---|
+| Answers product and policy questions | `search_knowledge_base` tool: keyword retrieval over markdown documents, with contextual chunking (`Product > Section`) |
+| Declines what it doesn't know | Product catalogue + prompt rules + section labels, so it says "we don't offer that" instead of inventing |
+| Records complaints | `log_complaint` tool: Pydantic validation, Malawi phone normalisation, reference numbers, routing by code |
+| Routes urgent cases | Fraud, data-protection and staff-conduct complaints go to Risk & Compliance as urgent; this is decided in code, not by the LLM |
+| Limits abuse | Max 3 complaints per phone number per local (UTC+2) day; fraud and data-protection reports are never blocked |
+| Protects members | Refuses PINs, passwords and one-time codes; never calculates loan costs or judges eligibility; discloses that it is automated |
 
-For your convenience, LiveKit offers both a CLI and an [MCP server](https://docs.livekit.io/reference/developer-tools/docs-mcp/) that can be used to browse and search its documentation. The [LiveKit CLI](https://docs.livekit.io/intro/basics/cli/) (`lk docs`) works with any coding agent that can run shell commands. See [Install the LiveKit CLI](#install-the-livekit-cli) below for installation instructions.
+## Architecture
 
-Once installed, your coding agent can search and browse LiveKit documentation directly from the terminal:
-
-```console
-lk docs search "voice agents"
-lk docs get-page /agents/start/voice-ai-quickstart
+```mermaid
+flowchart LR
+    Caller((Caller)) -->|audio| Room[LiveKit Cloud room]
+    Room --> STT[Speech-to-text]
+    STT --> LLM[LLM]
+    LLM -->|tool call| KB[search_knowledge_base]
+    KB --> Docs[(company_knowledge/*.md)]
+    LLM -->|tool call| CT[log_complaint]
+    CT --> DB[(SQLite)]
+    LLM --> TTS[Text-to-speech]
+    TTS --> Room
 ```
 
-See the [Using coding agents](https://docs.livekit.io/intro/coding-agents/) guide for more details, including MCP server setup.
+The business logic (`knowledge.py`, `complaints.py`) is plain Python with no LiveKit imports, so it can be reused by other agent frameworks or channels and tested in isolation.
 
-The project includes a complete [AGENTS.md](AGENTS.md) file for these assistants. You can modify this file to suit your needs. To learn more about this file, see [https://agents.md](https://agents.md).
+## Key design decisions
 
-## Dev Setup
+- **Code decides what must be reliable.** Routing, rate limits, validation and reference numbers are deterministic Python. The LLM decides *when* to use a tool, not *what the rules are*.
+- **Tools are contracts.** The agent only sees `search_knowledge_base(query)` and `log_complaint(...)`. Keyword search can be replaced by vector search, and SQLite by Postgres, without changing the tools.
+- **Validation errors are feedback.** When a tool call is invalid, the tool returns what to fix, so the agent asks the member again instead of failing.
+- **Fail closed.** The agent refuses to start without its knowledge folder; the frontend refuses tokens without a valid access code.
+- **Personal data stays out of logs.** Tools log reference numbers and categories, never names, phone numbers or questions.
 
-### Install the LiveKit CLI
+## Testing and evaluation
 
-The [LiveKit CLI](https://docs.livekit.io/intro/basics/cli/) creates the project and runs the agent locally. Install it for your platform:
+- **28 automated tests** (`pytest`) covering retrieval, chunking, validation, routing, reference numbers, SQL-injection safety, daily limits and time-zone boundaries
+- **CI on every push** (Ruff linting and formatting)
+- **Findings log** ([`docs/Findings.md`](docs/Findings.md)): failures observed in real test calls, with cause, risk and fix
 
-**macOS:**
+Selected findings:
 
-```console
-brew install livekit-cli
+| Finding | Status |
+|---|---|
+| Agent invented a "car loan" by applying one product's terms to another | Fixed in three layers: contextual chunking, prompt rules, product catalogue |
+| Agent promised to "use the number you're calling from" (a capability it doesn't have) | Fixed with explicit capability rules |
+| Intermittent silent replies (TTS p95 of 12 s) | Traced to a provider concurrency limit exhausted by pooled connections and a hung session shutdown; documented capacity limits |
+| Docker image built with a different Python version than runtime, rebuilding the environment on every cold start | Fixed by aligning the base image with `.python-version` |
+| PIN digits appear in transcripts and logs before the agent can refuse them | **Open:** needs PII redaction in code (planned) |
+| End-to-end latency ~4–5 s | **Open:** above the target for voice; tuning planned against a measured baseline |
+
+## Project structure
+
+```
+src/
+  agent.py          # Agent, prompt builder, tools, session setup
+  knowledge.py      # Document loading, contextual chunking, keyword search
+  complaints.py     # Complaint model, routing, reference numbers, storage, limits
+tests/              # pytest suite
+company_knowledge/  # Fictional SACCO documents (products, loan, complaints process)
+docs/Findings.md    # Findings log from real test calls
+Dockerfile          # Container build used for LiveKit Cloud deployment
 ```
 
-**Linux:**
+## Run locally
 
-```console
-curl -sSL https://get.livekit.io/cli | bash
-```
-
-**Windows:**
-
-```console
-winget install LiveKit.LiveKitCLI
-```
-
-Requires version 2.15.0 or higher. Check your version with `lk --version` and update if needed.
-
-### Create the project
-
-Create a project from this template with the CLI (recommended):
+Requires [uv](https://docs.astral.sh/uv/), the [LiveKit CLI](https://docs.livekit.io/intro/basics/cli/) and a LiveKit Cloud project.
 
 ```bash
-lk cloud auth
-lk agent init my-agent --template agent-starter-python
-```
-
-The CLI clones the template and configures your environment. Then follow the rest of this guide from [Run the agent](#run-the-agent).
-
-<details>
-<summary>Alternative: Set up the project manually</summary>
-
-Clone the repository and install dependencies to a virtual environment:
-
-```console
-cd agent-starter-python
 uv sync
-```
-
-Sign up for [LiveKit Cloud](https://cloud.livekit.io/) then set up the environment by copying `.env.example` to `.env.local` and filling in the required keys:
-
-- `LIVEKIT_URL`
-- `LIVEKIT_API_KEY`
-- `LIVEKIT_API_SECRET`
-
-You can load the LiveKit environment automatically using the [LiveKit CLI](https://docs.livekit.io/intro/basics/cli/):
-
-```bash
-lk cloud auth
-lk app env --write --destination .env.local
-```
-
-</details>
-
-## Run the agent
-
-The `lk agent` commands run your agent on your own machine. Run them from the project root — the CLI finds `src/agent.py` on its own.
-
-Run this command to speak to your agent directly in your terminal:
-
-```console
-lk agent console
-```
-
-To run the agent for use with a frontend or telephony, use the `dev` command, which adds hot reload on source changes and debug-level logging:
-
-```console
+cp .env.example .env.local      # then fill in your values (never commit .env.local)
+uv run pytest
 lk agent dev
 ```
 
-To run it in production mode, with clean logging and graceful shutdown, use the `start` command:
+Settings (see `.env.example`):
 
-```console
-lk agent start
+| Variable | Purpose |
+|---|---|
+| `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | LiveKit project credentials |
+| `COMPANY_NAME` | Name used in the greeting and prompt |
+| `COMPLAINTS_DB` | Path to the complaints database (default `data/complaints.db`) |
+| `DISABLE_NOISE_CANCELLATION` | Set to `true` on slow development machines only |
+
+## Deploy
+
+```bash
+lk agent create --secrets-file .env.deploy   # first time
+lk agent deploy                              # updates
 ```
 
-Your deployed agent starts from the `CMD` in the [Dockerfile](Dockerfile) rather than the CLI, since the container image doesn't include `lk`. See [Server startup modes](https://docs.livekit.io/agents/server/startup-modes/) for the full set of options each command accepts.
+## Roadmap
 
-## Frontend & Telephony
+- Postgres and vector search (pgvector) behind the existing tool contracts
+- PII redaction before logging and recording
+- Calculator tool so loan costs are computed by tested code, never by the LLM
+- Automated behaviour evaluations from the findings log
+- Latency tuning against the measured baseline
+- Telephony and SMS confirmation of complaint references
 
-Get started quickly with our pre-built frontend starter apps, or add telephony support:
+## Credits
 
-| Platform | Link | Description |
-|----------|----------|-------------|
-| **Web** | [`livekit-examples/agent-starter-react`](https://github.com/livekit-examples/agent-starter-react) | Web voice AI assistant with React & Next.js |
-| **iOS/macOS** | [`livekit-examples/agent-starter-swift`](https://github.com/livekit-examples/agent-starter-swift) | Native iOS, macOS, and visionOS voice AI assistant |
-| **Flutter** | [`livekit-examples/agent-starter-flutter`](https://github.com/livekit-examples/agent-starter-flutter) | Cross-platform voice AI assistant app |
-| **React Native** | [`livekit-examples/voice-assistant-react-native`](https://github.com/livekit-examples/voice-assistant-react-native) | Native mobile app with React Native & Expo |
-| **Android** | [`livekit-examples/agent-starter-android`](https://github.com/livekit-examples/agent-starter-android) | Native Android app with Kotlin & Jetpack Compose |
-| **Web Embed** | [`livekit-examples/agent-starter-embed`](https://github.com/livekit-examples/agent-starter-embed) | Voice AI widget for any website |
-| **Telephony** | [Documentation](https://docs.livekit.io/telephony/) | Add inbound or outbound calling to your agent |
+Built on LiveKit's [agent-starter-python](https://github.com/livekit-examples/agent-starter-python) template (MIT licence).
 
-For advanced customization, see the [complete frontend guide](https://docs.livekit.io/frontends/).
-
-## Tests and evals
-
-Simulations run full multi-turn conversations between a simulated user and your agent on LiveKit Cloud, then judge each transcript. The scenarios live in [`scenarios.yaml`](scenarios.yaml). Run them locally with the [LiveKit CLI](https://docs.livekit.io/intro/basics/cli/):
-
-```console
-lk agent simulate --scenarios scenarios.yaml
-```
-
-The `Simulations` workflow in `.github/workflows/simulations.yml` runs the same file on every merge to `main` and on demand from the Actions tab. It runs there rather than on every pull request push because each run spends real inference. See the [simulations guide](https://docs.livekit.io/agents/start/testing/simulations/) for how to write scenarios and read results.
-
-For turn-level checks that don't need a live session, the LiveKit Agents [testing & evaluation framework](https://docs.livekit.io/agents/start/testing/) runs your agent in-process under `pytest`. A commented-out example lives in [`tests/test_agent.py`](tests/test_agent.py).
-
-## Using this template repo for your own project
-
-Once you've started your own project based on this repo, you should:
-
-1. **Check in your `uv.lock`**: This file is currently untracked for the template, but you should commit it to your repository for reproducible builds and proper configuration management. (The same applies to `livekit.toml`, if you run your agents in LiveKit Cloud)
-
-2. **Add your own repository secrets**: You must [add secrets](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-what-your-workflow-does/using-secrets-in-github-actions) for `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` so that the simulations can run in CI.
-
-## Deploying to production
-
-This project is production-ready and includes a working `Dockerfile`. To deploy it to LiveKit Cloud or another environment, see the [deploying to production](https://docs.livekit.io/deploy/agents/) guide.
-
-## Self-hosted LiveKit
-
-You can also self-host LiveKit instead of using LiveKit Cloud. See the [self-hosting](https://docs.livekit.io/transport/self-hosting/local/) guide for more information. If you choose to self-host, you'll need to also use [model plugins](https://docs.livekit.io/agents/models/#plugins) instead of LiveKit Inference and will need to remove the [LiveKit Cloud noise cancellation](https://docs.livekit.io/transport/media/noise-cancellation/) plugin.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Built by **Daniel Kasambala**: [GitHub](https://github.com/DILHT) · [Portfolio](https://danielkasambala.netlify.app)
